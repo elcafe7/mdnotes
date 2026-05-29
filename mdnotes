@@ -15,7 +15,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout, HSplit, Window, BufferControl
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.widgets import TextArea, Label
-from prompt_toolkit.shortcuts import PromptSession, confirm
+from prompt_toolkit.shortcuts import confirm
 from prompt_toolkit.formatted_text import HTML
 
 # --- CONFIGURATION ---
@@ -77,7 +77,6 @@ class MDNotesEditor:
 
         @self.kb.add("escape", "n") # Alt+N
         def _(event):
-            # Signal to the home loop that we want a new note
             self.save()
             self.stop_autosave.set()
             event.app.exit(result="cmd_new_note")
@@ -89,22 +88,20 @@ class MDNotesEditor:
             event.app.exit(result="cmd_exit_to_menu")
 
     def run(self):
-        help_text = HTML(
-            '<style bg="ansiyellow" fg="ansiblack"> Alt+S: Save </style> '
-            '<style bg="ansigreen" fg="ansiblack"> Alt+N: New Note </style> '
-            '<style bg="ansiblue" fg="ansiwhite"> Alt+Z: Undo </style> '
-            '<style bg="ansired" fg="ansiwhite"> Esc+Enter: Save &amp; Back </style>'
+        # Using simple space-separated text for help toolbar to avoid XML parser fragility
+        help_text_string = (
+            " [Alt+S] Save | [Alt+N] New Note | [Alt+Z] Undo | [Esc+Enter] Save & Back "
         )
 
         format_info = (
-            "# H1 | ## H2 | **Bold** | *Italic* | - List | 1. List | `Code` | > Quote"
+            " # H1 | ## H2 | **Bold** | *Italic* | - List | 1. List | `Code` | > Quote "
         )
 
         layout = HSplit([
             Label(f" Editing: {self.title} ", style="bold bg:ansiwhite fg:ansiblack"),
             self.text_area,
             Label(format_info, style="bg:ansidarkgray fg:ansiwhite"),
-            Window(content=BufferControl(buffer=Buffer(document=help_text, read_only=True)), height=1),
+            Label(help_text_string, style="bg:ansiyellow fg:ansiblack"),
         ])
 
         app = Application(layout=Layout(layout), key_bindings=self.kb, full_screen=True)
@@ -136,14 +133,12 @@ def open_editor(path, title):
     result = editor.run()
     
     if result == "cmd_new_note":
-        # Handle the Alt+N flow
         if confirm("Save current and start a new note? (y/n)"):
             new_title = input("New Note Title: ").strip()
             if new_title:
                 new_filename = new_title.replace(" ", "_") + ".md"
                 new_path = os.path.join(NOTES_DIR, new_filename)
-                open_editor(new_path, new_title) # Recursive call to restart editor
-    # Otherwise, it returns to the interactive_home loop
+                open_editor(new_path, new_title)
 
 def interactive_home():
     setup_env()
