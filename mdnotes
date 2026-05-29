@@ -8,15 +8,14 @@ from datetime import datetime
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.table import Table
 
 from prompt_toolkit import Application
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Layout, HSplit, Window, BufferControl
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.widgets import TextArea, Label
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window
+from prompt_toolkit.widgets import TextArea, Label, Frame
 from prompt_toolkit.shortcuts import confirm
-from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.layout.containers import ConditionalContainer
+from prompt_toolkit.filters import Condition
 
 # --- CONFIGURATION ---
 NOTES_DIR = os.path.expanduser("~/md_notes")
@@ -30,6 +29,9 @@ class MDNotesEditor:
     def __init__(self, filepath, title):
         self.filepath = filepath
         self.title = title
+        self.show_menu = False
+        self.show_saved_msg = False
+        
         self.text_area = TextArea(
             text=self._load_content(),
             multiline=True,
@@ -44,6 +46,7 @@ class MDNotesEditor:
         self.stop_autosave = threading.Event()
         self.autosave_thread = threading.Thread(target=self.autosave_loop, daemon=True)
         self.autosave_thread.start()
+        self.app = None
 
     def _load_content(self):
         if os.path.exists(self.filepath):
@@ -51,25 +54,47 @@ class MDNotesEditor:
                 return f.read()
         return f"# {self.title}\n\n"
 
-    def save(self):
+    def save(self, show_msg=False):
         content = self.text_area.text
         with open(self.filepath, "w") as f:
             f.write(content)
         self.last_saved_content = content
+        
+        if show_msg:
+            self.show_saved_msg = True
+            if self.app:
+                self.app.invalidate()
+            
+            def hide_msg():
+                time.sleep(1)
+                self.show_saved_msg = False
+                if self.app:
+                    self.app.invalidate()
+            
+            threading.Thread(target=hide_msg, daemon=True).start()
+        
         return "Saved!"
 
     def autosave_loop(self):
         while not self.stop_autosave.is_set():
-            time.sleep(120)  # 2 minutes
+            time.sleep(120)
             if not self.stop_autosave.is_set():
                 if self.text_area.text != self.last_saved_content:
                     self.save()
 
+    def insert_text(self, before, after=""):
+        buffer = self.text_area.buffer
+        if after:
+            buffer.insert_text(before)
+            buffer.insert_text(after)
+            buffer.cursor_position -= len(after)
+        else:
+            buffer.insert_text(before)
+
     def setup_bindings(self):
         @self.kb.add("escape", "s") # Alt+S
         def _(event):
-            self.save()
-            event.app.invalidate()
+            self.save(show_msg=True)
 
         @self.kb.add("escape", "z") # Alt+Z
         def _(event):
@@ -81,39 +106,71 @@ class MDNotesEditor:
             self.stop_autosave.set()
             event.app.exit(result="cmd_new_note")
 
-        @self.kb.add("escape", "enter") # Save & Exit
+        @self.kb.add("escape") # Esc: Save & Exit
         def _(event):
-            self.save()
-            self.stop_autosave.set()
-            event.app.exit(result="cmd_exit_to_menu")
+            if self.show_menu:
+                self.show_menu = False
+            else:
+                self.save()
+                self.stop_autosave.set()
+                event.app.exit(result="cmd_exit_to_menu")
+
+        @self.kb.add("escape", "m") # Alt+M: Pop-up Menu
+        def _(event):
+            self.show_menu = not self.show_menu
+
+        @self.kb.add("escape", "1")
+        def _(event): self.insert_text("# ")
+        
+        @self.kb.add("escape", "2")
+        def _(event): self.insert_text("## ")
+
+        @self.kb.add("escape", "b")
+        def _(event): self.insert_text("**", "**")
+
+        @self.kb.add("escape", "i")
+        def _(event): self.insert_text("*", "*")
+
+        @self.kb.add("escape", "c")
+        def _(event): self.insert_text("`", "`")
 
     def run(self):
-        # Using simple space-separated text for help toolbar to avoid XML parser fragility
-        help_text_string = (
-            " [Alt+S] Save | [Alt+N] New Note | [Alt+Z] Undo | [Esc+Enter] Save & Back "
-        )
+        menu_content = VSplit([
+            Label(
+                " [Alt+1] H1      [Alt+2] H2\n"
+                " [Alt+B] Bold    [Alt+I] Italic\n"
+                " [Alt+C] Code    [Alt+S] Save\n"
+                " [Alt+N] New     [Esc] Exit",
+                style="bg:ansiblue fg:ansiwhite"
+            )
+        ])
 
-        format_info = (
-            " # H1 | ## H2 | **Bold** | *Italic* | - List | 1. List | `Code` | > Quote "
+        menu_container = ConditionalContainer(
+            content=Frame(menu_content, title="Formatting Menu (Alt+M to close)"),
+            filter=Condition(lambda: self.show_menu)
+        )
+        
+        saved_notification = ConditionalContainer(
+            content=Label(" ✅ Saved successfully! ", style="bg:ansigreen fg:ansiwhite"),
+            filter=Condition(lambda: self.show_saved_msg)
         )
 
         layout = HSplit([
             Label(f" Editing: {self.title} ", style="bold bg:ansiwhite fg:ansiblack"),
             self.text_area,
-            Label(format_info, style="bg:ansidarkgray fg:ansiwhite"),
-            Label(help_text_string, style="bg:ansiyellow fg:ansiblack"),
+            saved_notification,
+            menu_container,
         ])
 
-        app = Application(layout=Layout(layout), key_bindings=self.kb, full_screen=True)
-        result = app.run()
+        self.app = Application(layout=Layout(layout), key_bindings=self.kb, full_screen=True)
+        result = self.app.run()
         self.stop_autosave.set()
         return result
 
 def list_and_select():
     setup_env()
     files = sorted([f for f in os.listdir(NOTES_DIR) if f.endswith(".md")], reverse=True)
-    if not files:
-        return None
+    if not files: return None
 
     console.print("\n[bold]Existing Notes:[/bold]")
     for i, f in enumerate(files, 1):
@@ -122,10 +179,8 @@ def list_and_select():
     try:
         choice = input("\nSelect note # (or 0 to cancel): ")
         idx = int(choice)
-        if 0 < idx <= len(files):
-            return files[idx-1]
-    except:
-        pass
+        if 0 < idx <= len(files): return files[idx-1]
+    except: pass
     return None
 
 def open_editor(path, title):
@@ -145,12 +200,10 @@ def interactive_home():
     while True:
         console.clear()
         console.print(Panel.fit("[bold green]Welcome to mdnotes[/bold green]\n[dim]Simple Markdown for the CLI[/dim]", border_style="green"))
-        
         console.print("\n[1] Create [bold]New Note[/bold]")
         console.print("[2] Open [bold]Existing Note[/bold]")
         console.print("[3] Search")
         console.print("[0] Exit to Bash")
-        
         choice = input("\nAction: ")
         
         if choice == "1":
@@ -166,17 +219,13 @@ def interactive_home():
                 open_editor(path, fname.replace(".md", ""))
         elif choice == "3":
             query = input("Search term: ")
-            found = False
             for f in os.listdir(NOTES_DIR):
                 if f.endswith(".md"):
                     with open(os.path.join(NOTES_DIR, f), "r") as file:
                         if query.lower() in file.read().lower():
                             console.print(f"[green]Found in:[/green] {f}")
-                            found = True
-            if not found: console.print("No matches.")
-            input("Press Enter to continue...")
-        elif choice == "0":
-            break
+            input("Press Enter...")
+        elif choice == "0": break
 
 if __name__ == "__main__":
     interactive_home()
