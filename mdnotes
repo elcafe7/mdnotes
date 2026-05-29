@@ -93,7 +93,7 @@ class MDNotesEditor:
             '<style bg="ansiyellow" fg="ansiblack"> Alt+S: Save </style> '
             '<style bg="ansigreen" fg="ansiblack"> Alt+N: New Note </style> '
             '<style bg="ansiblue" fg="ansiwhite"> Alt+Z: Undo </style> '
-            '<style bg="ansired" fg="ansiwhite"> Esc+Enter: Save & Back </style>'
+            '<style bg="ansired" fg="ansiwhite"> Esc+Enter: Save &amp; Back </style>'
         )
 
         format_info = (
